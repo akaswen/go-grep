@@ -18,6 +18,8 @@ type LineMatch struct {
 }
 
 var ignoredFiles []string
+var allFiles []string
+
 var lineRegexp *regexp.Regexp = regexp.MustCompile(".*\n")
 var userRegexp *regexp.Regexp
 var errInvalidArguments = errors.New("Invalid arguments")
@@ -29,6 +31,7 @@ func check(e error) {
 }
 
 func fileShouldBeIgnored(fileName string) bool {
+	ignoredFiles = append(ignoredFiles, ".git")
 	for _, file := range ignoredFiles {
 		if fileName == file {
 			return true
@@ -43,30 +46,23 @@ func fileShouldBeIgnored(fileName string) bool {
 	return false
 }
 
-func getMatches(path string, wg *sync.WaitGroup) {
+func printMatches(fileName string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	files, err := ioutil.ReadDir(path)
+	f, err := os.Open(fileName)
 	check(err)
-	for _, file := range files {
-		fileName := path + "/" + file.Name()
-		if fileShouldBeIgnored(fileName) {
-			continue
-		}
-
-		if file.IsDir() {
-			wg.Add(1)
-			getMatches(fileName, wg)
-		} else {
-			dat, err := ioutil.ReadFile(fileName)
-			check(err)
-			lines := lineRegexp.FindAllString(string(dat), -1)
-			for i, line := range lines {
-				if userRegexp.MatchString(line) {
-					match := LineMatch{fileName, line, i + 1}
-					fmt.Printf("%v - %v: %v\n", match.FileName, match.LineNumber, match.Line)
-				}
-			}
+	info, err := f.Stat()
+	check(err)
+	size := info.Size()
+	dat := make([]byte, size)
+	_, err = f.Read(dat)
+	check(err)
+	f.Close()
+	lines := lineRegexp.FindAllString(string(dat), -1)
+	for i, line := range lines {
+		if userRegexp.MatchString(line) {
+			match := LineMatch{fileName, line, i + 1}
+			fmt.Printf("%v - %v: %v\n", match.FileName, match.LineNumber, match.Line)
 		}
 	}
 }
@@ -82,6 +78,22 @@ func ignoreFiles() {
 	}
 }
 
+func getAllFiles(path string) {
+	files, err := ioutil.ReadDir(path)
+	check(err)
+	for _, file := range files {
+		fileName := path + "/" + file.Name()
+		if fileShouldBeIgnored(fileName) {
+			continue
+		}
+		if file.IsDir() {
+			getAllFiles(fileName)
+		} else {
+			allFiles = append(allFiles, fileName)
+		}
+	}
+}
+
 func main() {
 	start := time.Now()
 
@@ -91,9 +103,14 @@ func main() {
 	userRegexp = regexp.MustCompile(os.Args[1])
 
 	ignoreFiles()
+	getAllFiles(".")
+
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go getMatches(".", &wg)
+
+	for _, fileName := range allFiles {
+		wg.Add(1)
+		go printMatches(fileName, &wg)
+	}
 
 	wg.Wait()
 	elapsed := time.Since(start)
