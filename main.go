@@ -43,9 +43,21 @@ func fileShouldBeIgnored(fileName string) bool {
 	return false
 }
 
-func getMatches(path string, wg *sync.WaitGroup) {
+func printFileMatches(fileName string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	dat, err := ioutil.ReadFile(fileName)
+	check(err)
+	lines := lineRegexp.FindAllString(string(dat), -1)
+	for i, line := range lines {
+		if userRegexp.MatchString(line) {
+			match := LineMatch{fileName, line, i + 1}
+			fmt.Printf("%v - %v: %v\n", match.FileName, match.LineNumber, match.Line)
+		}
+	}
+}
+
+func getMatches(path string, wg *sync.WaitGroup) {
 	files, err := ioutil.ReadDir(path)
 	check(err)
 	for _, file := range files {
@@ -55,18 +67,10 @@ func getMatches(path string, wg *sync.WaitGroup) {
 		}
 
 		if file.IsDir() {
-			wg.Add(1)
 			getMatches(fileName, wg)
 		} else {
-			dat, err := ioutil.ReadFile(fileName)
-			check(err)
-			lines := lineRegexp.FindAllString(string(dat), -1)
-			for i, line := range lines {
-				if userRegexp.MatchString(line) {
-					match := LineMatch{fileName, line, i + 1}
-					fmt.Printf("%v - %v: %v\n", match.FileName, match.LineNumber, match.Line)
-				}
-			}
+			wg.Add(1)
+			go printFileMatches(fileName, wg)
 		}
 	}
 }
@@ -92,10 +96,9 @@ func main() {
 
 	ignoreFiles()
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go getMatches(".", &wg)
-
+	getMatches(".", &wg)
 	wg.Wait()
+
 	elapsed := time.Since(start)
 	fmt.Println("search took: ", elapsed)
 }
