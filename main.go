@@ -4,16 +4,16 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"regexp"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
 
 type LineMatch struct {
-	FileName string
-	Line string
+	FileName   string
+	Line       string
 	LineNumber int
 }
 
@@ -25,9 +25,9 @@ var userRegexp *regexp.Regexp
 var errInvalidArguments = errors.New("Invalid arguments")
 
 func check(e error) {
-    if e != nil {
-        panic(e)
-    }
+	if e != nil {
+		panic(e)
+	}
 }
 
 func fileShouldBeIgnored(fileName string) bool {
@@ -35,9 +35,9 @@ func fileShouldBeIgnored(fileName string) bool {
 	for _, file := range ignoredFiles {
 		if fileName == file {
 			return true
-		} else if fileName == "." + file {
+		} else if fileName == "."+file {
 			return true
-		} else if fileName == "./" + file {
+		} else if fileName == "./"+file {
 			return true
 		}
 
@@ -46,23 +46,34 @@ func fileShouldBeIgnored(fileName string) bool {
 	return false
 }
 
-func printMatches(fileName string, wg *sync.WaitGroup) {
+func printFileMatches(fileName string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	f, err := os.Open(fileName)
+	dat, err := ioutil.ReadFile(fileName)
 	check(err)
-	info, err := f.Stat()
-	check(err)
-	size := info.Size()
-	dat := make([]byte, size)
-	_, err = f.Read(dat)
-	check(err)
-	f.Close()
 	lines := lineRegexp.FindAllString(string(dat), -1)
 	for i, line := range lines {
 		if userRegexp.MatchString(line) {
 			match := LineMatch{fileName, line, i + 1}
 			fmt.Printf("%v - %v: %v\n", match.FileName, match.LineNumber, match.Line)
+		}
+	}
+}
+
+func getMatches(path string, wg *sync.WaitGroup) {
+	files, err := ioutil.ReadDir(path)
+	check(err)
+	for _, file := range files {
+		fileName := path + "/" + file.Name()
+		if fileShouldBeIgnored(fileName) {
+			continue
+		}
+
+		if file.IsDir() {
+			getMatches(fileName, wg)
+		} else {
+			wg.Add(1)
+			go printFileMatches(fileName, wg)
 		}
 	}
 }
@@ -106,13 +117,9 @@ func main() {
 	getAllFiles(".")
 
 	var wg sync.WaitGroup
-
-	for _, fileName := range allFiles {
-		wg.Add(1)
-		go printMatches(fileName, &wg)
-	}
-
+	getMatches(".", &wg)
 	wg.Wait()
+
 	elapsed := time.Since(start)
 	fmt.Println("search took: ", elapsed)
 }
