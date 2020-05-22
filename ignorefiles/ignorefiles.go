@@ -9,14 +9,24 @@ import (
 var fileNames []string
 var ignoredLineRegexp *regexp.Regexp = regexp.MustCompile("\\S*\n")
 
-func PopulateIgnored() {
+func PopulateIgnored(ignoreArg string) {
 	data, err := ioutil.ReadFile(".gitignore")
 	if err == nil {
 		fileNames = ignoredLineRegexp.FindAllString(string(data), -1)
 		fileNames = append(fileNames, ".git")
-		for i, file := range fileNames {
-			fileNames[i] = strings.Trim(file, "\n ")
+	}
+
+	customArgs := strings.SplitN(ignoreArg, "=", 2)
+
+	if len(customArgs) > 1 {
+		customFiles := strings.SplitN(customArgs[1], ",", -1)
+		for _, customFile := range customFiles {
+			fileNames = append(fileNames, customFile)
 		}
+	}
+
+	for i, file := range fileNames {
+		fileNames[i] = strings.Trim(file, "\n ")
 	}
 }
 

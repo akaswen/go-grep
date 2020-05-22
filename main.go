@@ -34,14 +34,14 @@ func check(e error) {
 	}
 }
 
-func includes(arg string, slice []string) bool {
+func findArg(arg string, slice []string) (string, bool) {
 	for _, str := range slice {
-		if str == arg {
-			return true
+		if str[:2] == arg {
+			return str, true
 		}
 	}
 
-	return false
+	return "", false
 }
 
 func setOptions(o *Options) {
@@ -50,7 +50,11 @@ func setOptions(o *Options) {
 	}
 
 	o.UserRegexp = regexp.MustCompile(os.Args[1])
-	o.ShouldIgnoreFiles = includes("-I", os.Args)
+	var ignoreArg string
+	ignoreArg, o.ShouldIgnoreFiles = findArg("-I", os.Args)
+	if o.ShouldIgnoreFiles {
+		ignorefiles.PopulateIgnored(ignoreArg)
+	}
 }
 
 func printFileMatches(fileName string, wg *sync.WaitGroup) {
@@ -105,11 +109,6 @@ func main() {
 	start := time.Now()
 
 	setOptions(&currentOptions)
-
-	if currentOptions.ShouldIgnoreFiles {
-		ignorefiles.PopulateIgnored()
-	}
-
 	getAllFiles(".")
 
 	var wg sync.WaitGroup
