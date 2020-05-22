@@ -3,10 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
+	"go-grep/ignorefiles"
 	"io/ioutil"
 	"os"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 )
@@ -17,11 +17,15 @@ type LineMatch struct {
 	LineNumber int
 }
 
-var ignoredFiles []string
+type Options struct {
+	ShouldIgnoreFiles bool
+	UserRegexp        *regexp.Regexp
+}
+
 var allFiles []string
+var currentOptions Options
 
 var lineRegexp *regexp.Regexp = regexp.MustCompile(".*\n")
-var userRegexp *regexp.Regexp
 var errInvalidArguments = errors.New("Invalid arguments")
 
 func check(e error) {
@@ -30,20 +34,23 @@ func check(e error) {
 	}
 }
 
-func fileShouldBeIgnored(fileName string) bool {
-	ignoredFiles = append(ignoredFiles, ".git")
-	for _, file := range ignoredFiles {
-		if fileName == file {
-			return true
-		} else if fileName == "."+file {
-			return true
-		} else if fileName == "./"+file {
+func includes(arg string, slice []string) bool {
+	for _, str := range slice {
+		if str == arg {
 			return true
 		}
-
 	}
 
 	return false
+}
+
+func setOptions(o *Options) {
+	if len(os.Args) < 2 {
+		check(errInvalidArguments)
+	}
+
+	o.UserRegexp = regexp.MustCompile(os.Args[1])
+	o.ShouldIgnoreFiles = includes("-I", os.Args)
 }
 
 func printFileMatches(fileName string, wg *sync.WaitGroup) {
@@ -53,7 +60,7 @@ func printFileMatches(fileName string, wg *sync.WaitGroup) {
 	check(err)
 	lines := lineRegexp.FindAllString(string(dat), -1)
 	for i, line := range lines {
-		if userRegexp.MatchString(line) {
+		if currentOptions.UserRegexp.MatchString(line) {
 			match := LineMatch{fileName, line, i + 1}
 			fmt.Printf("%v - %v: %v\n", match.FileName, match.LineNumber, match.Line)
 		}
@@ -65,7 +72,7 @@ func getMatches(path string, wg *sync.WaitGroup) {
 	check(err)
 	for _, file := range files {
 		fileName := path + "/" + file.Name()
-		if fileShouldBeIgnored(fileName) {
+		if currentOptions.ShouldIgnoreFiles && ignorefiles.FileShouldBeIgnored(fileName) {
 			continue
 		}
 
@@ -78,23 +85,12 @@ func getMatches(path string, wg *sync.WaitGroup) {
 	}
 }
 
-func ignoreFiles() {
-	data, err := ioutil.ReadFile(".gitignore")
-	if err == nil {
-		ignoredLineRegexp := regexp.MustCompile("\\S*\n")
-		ignoredFiles = ignoredLineRegexp.FindAllString(string(data), -1)
-		for i, file := range ignoredFiles {
-			ignoredFiles[i] = strings.Trim(file, "\n ")
-		}
-	}
-}
-
 func getAllFiles(path string) {
 	files, err := ioutil.ReadDir(path)
 	check(err)
 	for _, file := range files {
 		fileName := path + "/" + file.Name()
-		if fileShouldBeIgnored(fileName) {
+		if ignorefiles.FileShouldBeIgnored(fileName) {
 			continue
 		}
 		if file.IsDir() {
@@ -108,12 +104,12 @@ func getAllFiles(path string) {
 func main() {
 	start := time.Now()
 
-	if len(os.Args) != 2 {
-		check(errInvalidArguments)
-	}
-	userRegexp = regexp.MustCompile(os.Args[1])
+	setOptions(&currentOptions)
 
-	ignoreFiles()
+	if currentOptions.ShouldIgnoreFiles {
+		ignorefiles.PopulateIgnored()
+	}
+
 	getAllFiles(".")
 
 	var wg sync.WaitGroup
