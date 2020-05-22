@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"go-grep/ignorefiles"
-	"io/ioutil"
 	"os"
 	"regexp"
 	"sync"
@@ -22,9 +21,7 @@ type Options struct {
 	UserRegexp        *regexp.Regexp
 }
 
-var allFiles []string
 var currentOptions Options
-
 var lineRegexp *regexp.Regexp = regexp.MustCompile(".*\n")
 var errInvalidArguments = errors.New("Invalid arguments")
 
@@ -57,23 +54,41 @@ func setOptions(o *Options) {
 	}
 }
 
+func getFileData(fileName string) []byte {
+	file, err := os.Open(fileName)
+	check(err)
+	info, err := file.Stat()
+	check(err)
+	data := make([]byte, info.Size())
+	_, err = file.Read(data)
+	check(err)
+	file.Close()
+
+	return data
+}
+
 func printFileMatches(fileName string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	dat, err := ioutil.ReadFile(fileName)
-	check(err)
-	lines := lineRegexp.FindAllString(string(dat), -1)
+	data := getFileData(fileName)
+
+	lines := lineRegexp.FindAllString(string(data), -1)
 	for i, line := range lines {
 		if currentOptions.UserRegexp.MatchString(line) {
 			match := LineMatch{fileName, line, i + 1}
 			fmt.Printf("%v - %v: %v\n", match.FileName, match.LineNumber, match.Line)
 		}
 	}
+
 }
 
-func getMatches(path string, wg *sync.WaitGroup) {
-	files, err := ioutil.ReadDir(path)
+func exploreFiles(path string, wg *sync.WaitGroup) {
+	file, err := os.Open(path)
 	check(err)
+	files, err := file.Readdir(-1)
+	check(err)
+	file.Close()
+	
 	for _, file := range files {
 		fileName := path + "/" + file.Name()
 		if currentOptions.ShouldIgnoreFiles && ignorefiles.FileShouldBeIgnored(fileName) {
@@ -81,26 +96,10 @@ func getMatches(path string, wg *sync.WaitGroup) {
 		}
 
 		if file.IsDir() {
-			getMatches(fileName, wg)
+			exploreFiles(fileName, wg)
 		} else {
 			wg.Add(1)
 			go printFileMatches(fileName, wg)
-		}
-	}
-}
-
-func getAllFiles(path string) {
-	files, err := ioutil.ReadDir(path)
-	check(err)
-	for _, file := range files {
-		fileName := path + "/" + file.Name()
-		if ignorefiles.FileShouldBeIgnored(fileName) {
-			continue
-		}
-		if file.IsDir() {
-			getAllFiles(fileName)
-		} else {
-			allFiles = append(allFiles, fileName)
 		}
 	}
 }
@@ -109,10 +108,9 @@ func main() {
 	start := time.Now()
 
 	setOptions(&currentOptions)
-	getAllFiles(".")
 
 	var wg sync.WaitGroup
-	getMatches(".", &wg)
+	exploreFiles(".", &wg)
 	wg.Wait()
 
 	elapsed := time.Since(start)
