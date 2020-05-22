@@ -88,7 +88,7 @@ func exploreFiles(path string, wg *sync.WaitGroup) {
 	files, err := file.Readdir(-1)
 	check(err)
 	file.Close()
-	
+
 	for _, file := range files {
 		fileName := path + "/" + file.Name()
 		if currentOptions.ShouldIgnoreFiles && ignorefiles.FileShouldBeIgnored(fileName) {
