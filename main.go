@@ -24,6 +24,7 @@ type Options struct {
 var currentOptions Options
 var lineRegexp *regexp.Regexp = regexp.MustCompile(".*\n")
 var errInvalidArguments = errors.New("Invalid arguments")
+var maxActiveThreads int = 500
 
 func check(e error) {
 	if e != nil {
@@ -67,8 +68,10 @@ func getFileData(fileName string) []byte {
 	return data
 }
 
-func printFileMatches(fileName string, wg *sync.WaitGroup) {
+func printFileMatches(fileName string, wg *sync.WaitGroup, threadBlocker chan struct{}) {
+	threadBlocker <- struct{}{}
 	defer wg.Done()
+	defer func() { <-threadBlocker }()
 
 	data := getFileData(fileName)
 
@@ -82,7 +85,7 @@ func printFileMatches(fileName string, wg *sync.WaitGroup) {
 
 }
 
-func exploreFiles(path string, wg *sync.WaitGroup) {
+func exploreFiles(path string, wg *sync.WaitGroup, threadBlocker chan struct{}) {
 	file, err := os.Open(path)
 	check(err)
 	files, err := file.Readdir(-1)
@@ -96,21 +99,23 @@ func exploreFiles(path string, wg *sync.WaitGroup) {
 		}
 
 		if file.IsDir() {
-			exploreFiles(fileName, wg)
+			exploreFiles(fileName, wg, threadBlocker)
 		} else {
 			wg.Add(1)
-			go printFileMatches(fileName, wg)
+			go printFileMatches(fileName, wg, threadBlocker)
 		}
 	}
 }
 
 func main() {
 	start := time.Now()
+	fmt.Println("max active threads: ", maxActiveThreads)
 
 	setOptions(&currentOptions)
 
+	threadBlocker := make(chan struct{}, maxActiveThreads)
 	var wg sync.WaitGroup
-	exploreFiles(".", &wg)
+	exploreFiles(".", &wg, threadBlocker)
 	wg.Wait()
 
 	elapsed := time.Since(start)
