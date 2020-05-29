@@ -58,12 +58,13 @@ func setOptions(o *Options) {
 func getFileData(fileName string) []byte {
 	file, err := os.Open(fileName)
 	check(err)
+	defer file.Close()
+
 	info, err := file.Stat()
 	check(err)
 	data := make([]byte, info.Size())
 	_, err = file.Read(data)
 	check(err)
-	file.Close()
 
 	return data
 }
