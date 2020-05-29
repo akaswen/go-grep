@@ -85,12 +85,19 @@ func printFileMatches(fileName string, wg *sync.WaitGroup, threadBlocker chan st
 
 }
 
-func exploreFiles(path string, wg *sync.WaitGroup, threadBlocker chan struct{}) {
+func readPwd(path string) []os.FileInfo {
 	file, err := os.Open(path)
 	check(err)
+	defer file.Close()
+
 	files, err := file.Readdir(-1)
 	check(err)
-	file.Close()
+
+	return files
+}
+
+func exploreFiles(path string, wg *sync.WaitGroup, threadBlocker chan struct{}) {
+	files := readPwd(path)
 
 	for _, file := range files {
 		fileName := path + "/" + file.Name()
