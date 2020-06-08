@@ -23,6 +23,7 @@ type Options struct {
 
 var currentOptions Options
 var lineRegexp *regexp.Regexp = regexp.MustCompile(".*\n")
+var ignoredTypeRegexp *regexp.Regexp = regexp.MustCompile("(png)|(jpg)|(xml)|(jar)|(pdf)|(zip)|(plist)")
 var errInvalidArguments = errors.New("Invalid arguments")
 var maxActiveThreads int = 500
 
@@ -97,6 +98,10 @@ func readPwd(path string) []os.FileInfo {
 	return files
 }
 
+func notIgnoredType (file string) bool {
+	return !ignoredTypeRegexp.MatchString(file)
+}
+
 func exploreFiles(path string, wg *sync.WaitGroup, threadBlocker chan struct{}) {
 	files := readPwd(path)
 
@@ -109,8 +114,10 @@ func exploreFiles(path string, wg *sync.WaitGroup, threadBlocker chan struct{}) 
 		if file.IsDir() {
 			exploreFiles(fileName, wg, threadBlocker)
 		} else {
-			wg.Add(1)
-			go printFileMatches(fileName, wg, threadBlocker)
+			if notIgnoredType(fileName) {
+				wg.Add(1)
+				go printFileMatches(fileName, wg, threadBlocker)
+			}
 		}
 	}
 }
