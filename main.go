@@ -1,138 +1,64 @@
 package main
 
 import (
-	"errors"
+	"flag"
 	"fmt"
-	"go-grep/ignorefiles"
 	"os"
-	"regexp"
-	"sync"
+	"os/exec"
 	"time"
+
+	"go-grep/pkg/search"
 )
 
-type LineMatch struct {
-	FileName   string
-	Line       string
-	LineNumber int
+type options struct {
+	useAck bool
 }
 
-type Options struct {
-	ShouldIgnoreFiles bool
-	UserRegexp        *regexp.Regexp
+func parseArgs() (opts options, err error) {
+	flag.BoolVar(&opts.useAck, "a", false, "uses ack instead")
+	flag.Parse()
+
+	return opts, nil
 }
 
-var currentOptions Options
-var lineRegexp *regexp.Regexp = regexp.MustCompile(".*\n")
-var ignoredTypeRegexp *regexp.Regexp = regexp.MustCompile("(png)|(jpg)|(xml)|(jar)|(pdf)|(zip)|(plist)")
-var errInvalidArguments = errors.New("Invalid arguments")
-var maxActiveThreads int = 500
-
-func check(e error) {
-	if e != nil {
-		panic(e)
-	}
+func useAck(searchTerm, filePath string) {
+	fmt.Println(searchTerm, filePath)
+	cmd := exec.Command("ack", searchTerm, filePath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Run()
 }
 
-func findArg(arg string, slice []string) (string, bool) {
-	for _, str := range slice {
-		if str[:2] == arg {
-			return str, true
-		}
+func getArgs() (searchTerm, filePath string, err error) {
+	searchTerm = flag.Arg(0)
+	filePath = flag.Arg(1)
+
+	if searchTerm == "" || filePath == "" {
+		return "", "", fmt.Errorf("need at least 2 arguments")
 	}
 
-	return "", false
-}
-
-func setOptions(o *Options) {
-	if len(os.Args) < 2 {
-		check(errInvalidArguments)
-	}
-
-	o.UserRegexp = regexp.MustCompile(os.Args[1])
-	var ignoreArg string
-	ignoreArg, o.ShouldIgnoreFiles = findArg("-I", os.Args)
-	if o.ShouldIgnoreFiles {
-		ignorefiles.PopulateIgnored(ignoreArg)
-	}
-}
-
-func getFileData(fileName string) []byte {
-	file, err := os.Open(fileName)
-	check(err)
-	defer file.Close()
-
-	info, err := file.Stat()
-	check(err)
-	data := make([]byte, info.Size())
-	_, err = file.Read(data)
-	check(err)
-
-	return data
-}
-
-func printFileMatches(fileName string, wg *sync.WaitGroup, threadBlocker chan struct{}) {
-	threadBlocker <- struct{}{}
-	defer wg.Done()
-	defer func() { <-threadBlocker }()
-
-	data := getFileData(fileName)
-
-	lines := lineRegexp.FindAllString(string(data), -1)
-	for i, line := range lines {
-		if currentOptions.UserRegexp.MatchString(line) {
-			match := LineMatch{fileName, line, i + 1}
-			fmt.Printf("%v - %v: %v\n", match.FileName, match.LineNumber, match.Line)
-		}
-	}
-
-}
-
-func readPwd(path string) []os.FileInfo {
-	file, err := os.Open(path)
-	check(err)
-	defer file.Close()
-
-	files, err := file.Readdir(-1)
-	check(err)
-
-	return files
-}
-
-func notIgnoredType (file string) bool {
-	return !ignoredTypeRegexp.MatchString(file)
-}
-
-func exploreFiles(path string, wg *sync.WaitGroup, threadBlocker chan struct{}) {
-	files := readPwd(path)
-
-	for _, file := range files {
-		fileName := path + "/" + file.Name()
-		if currentOptions.ShouldIgnoreFiles && ignorefiles.FileShouldBeIgnored(fileName) {
-			continue
-		}
-
-		if file.IsDir() {
-			exploreFiles(fileName, wg, threadBlocker)
-		} else {
-			if notIgnoredType(fileName) {
-				wg.Add(1)
-				go printFileMatches(fileName, wg, threadBlocker)
-			}
-		}
-	}
+	return
 }
 
 func main() {
 	start := time.Now()
-	fmt.Println("max active threads: ", maxActiveThreads)
 
-	setOptions(&currentOptions)
+	opts, err := parseArgs()
+	searchTerm, filePath, err := getArgs()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
-	threadBlocker := make(chan struct{}, maxActiveThreads)
-	var wg sync.WaitGroup
-	exploreFiles(".", &wg, threadBlocker)
-	wg.Wait()
+	if err != nil {
+		panic(err)
+	}
 
-	elapsed := time.Since(start)
-	fmt.Println("search took: ", elapsed)
+	if opts.useAck {
+		useAck(searchTerm, filePath)
+	} else {
+		search.Search(searchTerm, filePath)
+	}
+
+	fmt.Println("Search took: ", time.Since(start))
 }
