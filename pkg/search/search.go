@@ -2,11 +2,13 @@ package search
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"os"
 	"regexp"
 	"sync"
+	"time"
+
+	"github.com/as/hue"
 )
 
 type result struct {
@@ -16,6 +18,11 @@ type result struct {
 }
 
 var searchRegex *regexp.Regexp
+var printResultWriter *hue.RegexpWriter
+var processFilesThreads int = 300
+var fileColor = hue.Red
+var matchColor = hue.Green
+var numbersColor = hue.Blue
 
 func check(err error) {
 	if err != nil {
@@ -23,15 +30,18 @@ func check(err error) {
 	}
 }
 
-func readPwd(path string) []os.FileInfo {
+func readPwd(path string) ([]os.FileInfo, error) {
 	file, err := os.Open(path)
-	check(err)
+	if err != nil {
+		return make([]os.FileInfo, 0), err
+	}
+
 	defer file.Close()
 
 	files, err := file.Readdir(-1)
 	check(err)
 
-	return files
+	return files, nil
 }
 
 func sanitize(filePath string) string {
@@ -42,52 +52,106 @@ func sanitize(filePath string) string {
 	}
 }
 
-func Search(searchTerm, filePath string) {
-	searchRegex = regexp.MustCompile(searchTerm)
-
-	ch := make(chan result, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-
-	go func(ch chan result, ctx context.Context) {
-		for {
-			select {
-			case <-ctx.Done():
-				break
-			case result := <-ch:
-				fmt.Printf("%v - %v: %v\n", result.filePath, result.lineNumber, result.line)
-			default:
-				continue
-			}
-		}
-	}(ch, ctx)
-
-	var wg sync.WaitGroup
-
-	wg.Add(1)
-	go exploreFiles(filePath, ch, &wg)
-	wg.Wait()
-	cancel()
+func printResults(results chan result) {
+	for {
+		r := <-results
+		output := fmt.Sprintf("%v - %v: %v\n", r.filePath, r.lineNumber, r.line)
+		printResultWriter.WriteString(output)
+	}
 }
 
-func exploreFiles(filePath string, ch chan result, wg *sync.WaitGroup) {
+type WaitGroup struct {
+	mu    sync.Mutex
+	wg    sync.WaitGroup
+	count int
+}
+
+func (wg *WaitGroup) Add() {
+	wg.mu.Lock()
+	defer wg.mu.Unlock()
+	wg.wg.Add(1)
+	wg.count += 1
+}
+
+func (wg *WaitGroup) Done() {
+	wg.mu.Lock()
+	defer wg.mu.Unlock()
+	wg.wg.Done()
+	wg.count -= 1
+}
+
+func Search(searchTerm, filePath string) {
+	searchRegex = regexp.MustCompile(fmt.Sprintf("(%v)", searchTerm))
+
+	printResultWriter = hue.NewRegexpWriter(os.Stdout)
+	match := hue.New(matchColor, hue.Default)
+	file := hue.New(fileColor, hue.Default)
+	number := hue.New(numbersColor, hue.Default)
+	printResultWriter.AddRuleString(match, searchTerm)
+	printResultWriter.AddRuleString(file, `^\S+`)
+	printResultWriter.AddRuleString(number, `\d+:`)
+
+	results := make(chan result, 16000)
+	files := make(chan string, 16000)
+	var wg WaitGroup
+
+	go printResults(results)
+
+	for i := 0; i < processFilesThreads; i++ {
+		go processFiles(files, results, &wg)
+	}
+
+	searchDirectories(filePath, files, &wg)
+	wg.wg.Wait()
+	time.Sleep(100 * time.Millisecond)
+}
+
+func processFiles(files chan string, results chan result, wg *WaitGroup) {
+	for {
+		filePath := <-files
+		searchFile(filePath, results)
+		wg.Done()
+	}
+}
+
+func searchDirectories(filePath string, files chan string, wg *WaitGroup) {
 	basePath := sanitize(filePath)
-	files := readPwd(basePath)
-	for _, f := range files {
-		if f.IsDir() {
-			wg.Add(1)
-			go exploreFiles(basePath+f.Name(), ch, wg)
+	fileInfos, err := readPwd(basePath)
+	if err != nil {
+		if match, _ := regexp.MatchString("operation not permitted", err.Error()); match {
+			return
+		} else if match, _ := regexp.MatchString("permission denied", err.Error()); match {
+			return
 		} else {
-			searchFile(basePath+f.Name(), ch)
+			fmt.Println("the error: ", err.Error())
+			panic(err)
 		}
 	}
-	wg.Done()
+
+	for _, f := range fileInfos {
+		if f.IsDir() && f.Name() != ".git" {
+			searchDirectories(basePath+f.Name(), files, wg)
+		} else {
+			if f.Mode().IsRegular() {
+				wg.Add()
+				files <- basePath + f.Name()
+			}
+		}
+	}
 }
 
 func searchFile(filePath string, ch chan result) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		check(err)
+		if match, _ := regexp.MatchString("operation not permitted", err.Error()); match {
+			return
+		} else if match, _ := regexp.MatchString("permission denied", err.Error()); match {
+			return
+		} else {
+			panic(err)
+		}
 	}
+
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
