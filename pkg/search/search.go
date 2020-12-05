@@ -2,11 +2,11 @@ package search
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"regexp"
 	"sync"
-	"time"
 
 	"github.com/as/hue"
 )
@@ -19,7 +19,7 @@ type result struct {
 
 var searchRegex *regexp.Regexp
 var printResultWriter *hue.RegexpWriter
-var processFilesThreads int = 300
+var processFilesThreads int = 200
 var fileColor = hue.Red
 var matchColor = hue.Green
 var numbersColor = hue.Blue
@@ -52,11 +52,27 @@ func sanitize(filePath string) string {
 	}
 }
 
-func printResults(results chan result) {
+func printResults(results chan result, ctx context.Context) {
 	for {
-		r := <-results
-		output := fmt.Sprintf("%v - %v: %v\n", r.filePath, r.lineNumber, r.line)
-		printResultWriter.WriteString(output)
+		select {
+		case <-ctx.Done():
+			return
+		case r := <-results:
+			output := fmt.Sprintf("%v - %v: %v\n", r.filePath, r.lineNumber, r.line)
+			printResultWriter.WriteString(output)
+		}
+	}
+}
+
+func printRestOfResults(results chan result) {
+	for {
+		select {
+		case r := <-results:
+			output := fmt.Sprintf("%v - %v: %v\n", r.filePath, r.lineNumber, r.line)
+			printResultWriter.WriteString(output)
+		default:
+			return
+		}
 	}
 }
 
@@ -93,20 +109,22 @@ func Search(searchTerm, filePath string) {
 
 	results := make(chan result, 16000)
 	files := make(chan string, 16000)
-	var wg WaitGroup
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
 
-	go printResults(results)
+	go printResults(results, ctx)
 
 	for i := 0; i < processFilesThreads; i++ {
 		go processFiles(files, results, &wg)
 	}
 
 	searchDirectories(filePath, files, &wg)
-	wg.wg.Wait()
-	time.Sleep(100 * time.Millisecond)
+	wg.Wait()
+	cancel()
+	printRestOfResults(results)
 }
 
-func processFiles(files chan string, results chan result, wg *WaitGroup) {
+func processFiles(files chan string, results chan result, wg *sync.WaitGroup) {
 	for {
 		filePath := <-files
 		searchFile(filePath, results)
@@ -114,7 +132,7 @@ func processFiles(files chan string, results chan result, wg *WaitGroup) {
 	}
 }
 
-func searchDirectories(filePath string, files chan string, wg *WaitGroup) {
+func searchDirectories(filePath string, files chan string, wg *sync.WaitGroup) {
 	basePath := sanitize(filePath)
 	fileInfos, err := readPwd(basePath)
 	if err != nil {
@@ -133,7 +151,7 @@ func searchDirectories(filePath string, files chan string, wg *WaitGroup) {
 			searchDirectories(basePath+f.Name(), files, wg)
 		} else {
 			if f.Mode().IsRegular() {
-				wg.Add()
+				wg.Add(1)
 				files <- basePath + f.Name()
 			}
 		}
