@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"sync"
+	"log"
 
 	"github.com/as/hue"
 )
@@ -23,23 +24,26 @@ var processFilesThreads int = 200
 var fileColor = hue.Red
 var matchColor = hue.Green
 var numbersColor = hue.Blue
+var logger = log.New(os.Stderr, "", log.Lmicroseconds)
 
-func check(err error) {
-	if err != nil {
-		panic(err)
-	}
+func logErr(err error) {
+	logger.Println(err)
 }
 
 func readPwd(path string) ([]os.FileInfo, error) {
 	file, err := os.Open(path)
 	if err != nil {
+		logErr(err)
 		return make([]os.FileInfo, 0), err
 	}
 
 	defer file.Close()
 
 	files, err := file.Readdir(-1)
-	check(err)
+	if err != nil {
+		logErr(err)
+		return make([]os.FileInfo, 0), err
+	}
 
 	return files, nil
 }
@@ -136,14 +140,8 @@ func searchDirectories(filePath string, files chan string, wg *sync.WaitGroup) {
 	basePath := sanitize(filePath)
 	fileInfos, err := readPwd(basePath)
 	if err != nil {
-		if match, _ := regexp.MatchString("operation not permitted", err.Error()); match {
-			return
-		} else if match, _ := regexp.MatchString("permission denied", err.Error()); match {
-			return
-		} else {
-			fmt.Println("the error: ", err.Error())
-			panic(err)
-		}
+		logErr(err)
+		return
 	}
 
 	for _, f := range fileInfos {
@@ -161,13 +159,8 @@ func searchDirectories(filePath string, files chan string, wg *sync.WaitGroup) {
 func searchFile(filePath string, ch chan result) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		if match, _ := regexp.MatchString("operation not permitted", err.Error()); match {
-			return
-		} else if match, _ := regexp.MatchString("permission denied", err.Error()); match {
-			return
-		} else {
-			panic(err)
-		}
+		logErr(err)
+		return
 	}
 
 	defer file.Close()
