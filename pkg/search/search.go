@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"regexp"
 	"sync"
-	"log"
+	"syscall"
 
 	"github.com/as/hue"
 )
@@ -20,7 +21,6 @@ type result struct {
 
 var searchRegex *regexp.Regexp
 var printResultWriter *hue.RegexpWriter
-var processFilesThreads int = 200
 var fileColor = hue.Red
 var matchColor = hue.Green
 var numbersColor = hue.Blue
@@ -111,14 +111,20 @@ func Search(searchTerm, filePath string) {
 	printResultWriter.AddRuleString(file, `^\S+`)
 	printResultWriter.AddRuleString(number, `\d+:`)
 
-	results := make(chan result, 16000)
-	files := make(chan string, 16000)
+	results := make(chan result, 1000)
+	files := make(chan string, 1000)
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go printResults(results, ctx)
 
-	for i := 0; i < processFilesThreads; i++ {
+	var rLimit syscall.Rlimit
+	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	if err != nil {
+		panic(err)
+	}
+
+	for i := uint64(0); i < rLimit.Cur - 10; i++ {
 		go processFiles(files, results, &wg)
 	}
 
