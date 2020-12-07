@@ -5,10 +5,9 @@ an exploration of go with a grep-like command line tool
 Installation of go
 
 # build instructions
-run `go build .`
+run `go install .`
+make sure GOPATH is included in PATH
 
 # usage
-simple add the go-grep binary to runpath and then run with go-grep "expr"
-
-Possible flags:
-- -I - allows automatically ignoring .git folder and everything in .gitignore.  Can also specify additional files to ignore with = e.g. `go-grep something_to_grep -I=file/to/ignore`
+simple add the go-grep binary to runpath and then run with go-grep "expr" "path" 
+e.g. `go-grep "something to search" .`
